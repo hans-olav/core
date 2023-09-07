@@ -16,7 +16,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import NexiaDataUpdateCoordinator
-from .entity import NexiaThermostatEntity, NexiaThermostatZoneEntity
+from .entity import (
+    NexiaThermostatEntity,
+    NexiaThermostatZoneEntity,
+    NexiaThermostatIqEntity,
+)
 from .util import percent_conv
 
 
@@ -86,10 +90,6 @@ async def async_setup_entry(
             )
         # Outdoor Temperature
         if thermostat.has_outdoor_temperature():
-            if thermostat.get_unit() == UNIT_CELSIUS:
-                unit = UnitOfTemperature.CELSIUS
-            else:
-                unit = UnitOfTemperature.FAHRENHEIT
             entities.append(
                 NexiaThermostatSensor(
                     coordinator,
@@ -97,7 +97,7 @@ async def async_setup_entry(
                     "get_outdoor_temperature",
                     "outdoor_temperature",
                     SensorDeviceClass.TEMPERATURE,
-                    unit,
+                    _get_temperature_unit(thermostat),
                     SensorStateClass.MEASUREMENT,
                 )
             )
@@ -119,10 +119,7 @@ async def async_setup_entry(
         # Zone Sensors
         for zone_id in thermostat.get_zone_ids():
             zone = thermostat.get_zone_by_id(zone_id)
-            if thermostat.get_unit() == UNIT_CELSIUS:
-                unit = UnitOfTemperature.CELSIUS
-            else:
-                unit = UnitOfTemperature.FAHRENHEIT
+
             # Temperature
             entities.append(
                 NexiaThermostatZoneSensor(
@@ -131,7 +128,7 @@ async def async_setup_entry(
                     "get_temperature",
                     None,
                     SensorDeviceClass.TEMPERATURE,
-                    unit,
+                    _get_temperature_unit(thermostat),
                     SensorStateClass.MEASUREMENT,
                     None,
                 )
@@ -155,7 +152,72 @@ async def async_setup_entry(
                 )
             )
 
+        # Room IQ sensors
+        for room_iq_id in thermostat.get_room_iq_ids():
+            iq = thermostat.get_room_iq_by_id(room_iq_id)
+
+            if bool(iq.get_weight()):
+                entities.append(
+                    NexiaThermostatIqSensor(
+                        coordinator,
+                        iq,
+                        "get_weight",
+                        "room_iq_weight",
+                        None,
+                        PERCENTAGE,
+                        SensorStateClass.MEASUREMENT,
+                        percent_conv,
+                    )
+                )
+
+            entities.append(
+                NexiaThermostatIqSensor(
+                    coordinator,
+                    iq,
+                    "get_temperature",
+                    None,
+                    SensorDeviceClass.TEMPERATURE,
+                    _get_temperature_unit(thermostat),
+                    SensorStateClass.MEASUREMENT,
+                    None,
+                )
+            )
+
+            if bool(iq.get_humidity()):
+                entities.append(
+                    NexiaThermostatIqSensor(
+                        coordinator,
+                        iq,
+                        "get_humidity",
+                        None,
+                        SensorDeviceClass.HUMIDITY,
+                        PERCENTAGE,
+                        SensorStateClass.MEASUREMENT,
+                    )
+                )
+
+            if bool(iq.get_battery_level()):
+                entities.append(
+                    NexiaThermostatIqSensor(
+                        coordinator,
+                        iq,
+                        "get_battery_level",
+                        "room_iq_battery",
+                        None,
+                        PERCENTAGE,
+                        SensorStateClass.MEASUREMENT,
+                    )
+                )
+
     async_add_entities(entities)
+
+
+def _get_temperature_unit(thermostat) -> UnitOfTemperature:
+    """Gets the temperature unit the thermostat operates in."""
+    if thermostat.get_unit() == UNIT_CELSIUS:
+        return UnitOfTemperature.CELSIUS
+    else:
+        return UnitOfTemperature.FAHRENHEIT
 
 
 class NexiaThermostatSensor(NexiaThermostatEntity, SensorEntity):
@@ -230,6 +292,46 @@ class NexiaThermostatZoneSensor(NexiaThermostatZoneEntity, SensorEntity):
     def native_value(self):
         """Return the state of the sensor."""
         val = getattr(self._zone, self._call)()
+        if self._modifier:
+            val = self._modifier(val)
+        if isinstance(val, float):
+            val = round(val, 1)
+        return val
+
+
+class NexiaThermostatIqSensor(NexiaThermostatIqEntity, SensorEntity):
+    """Nexia Room IQ Sensor Support."""
+
+    def __init__(
+        self,
+        coordinator,
+        iq,
+        sensor_call,
+        translation_key,
+        sensor_class,
+        sensor_unit,
+        state_class,
+        modifier=None,
+    ):
+        """Create an IQ sensor."""
+
+        super().__init__(
+            coordinator,
+            iq,
+            unique_id=f"{iq.iq_id}_{sensor_call}",
+        )
+        self._call = sensor_call
+        self._modifier = modifier
+        self._attr_device_class = sensor_class
+        self._attr_native_unit_of_measurement = sensor_unit
+        self._attr_state_class = state_class
+        if translation_key is not None:
+            self._attr_translation_key = translation_key
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        val = getattr(self._iq, self._call)()
         if self._modifier:
             val = self._modifier(val)
         if isinstance(val, float):

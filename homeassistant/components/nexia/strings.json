@@ -53,6 +53,12 @@
       },
       "zone_setpoint_status": {
         "name": "Zone setpoint status"
+      },
+      "room_iq_weight": {
+        "name": "Weight"
+      },
+      "room_iq_battery": {
+        "name": "Battery Level"
       }
     },
     "switch": {
